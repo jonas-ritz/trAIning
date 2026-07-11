@@ -1,5 +1,8 @@
 # Training Coach
 
+> **Status: planning phase.** No application code exists yet — this repo currently holds the
+> spec and working conventions only. See [Status](#status) below.
+
 A personal training coach that plans on its own and listens when you have something to say.
 
 It ingests everything recorded by a Garmin watch, measures what actually happened with a
