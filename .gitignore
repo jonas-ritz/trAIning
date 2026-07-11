@@ -1,21 +1,79 @@
-# .NET
+## .NET / Blazor / ASP.NET Core
 bin/
 obj/
+out/
 *.user
+*.userosscache
+*.suo
+*.userprefs
+project.lock.json
+project.fragment.lock.json
+artifacts/
+publish/
+*.pubxml
+*.pubxml.user
+*.nupkg
+*.snupkg
+.dotnet/
 
-# Node (Blazor/PWA tooling, if used)
+## Azure Functions
+local.settings.json
+bin/host.json.bak
+
+## EF Core
+*.mdf
+*.ldf
+*.ndf
+
+## Python (garmin-collector container)
+__pycache__/
+*.py[cod]
+*.pyc
+.venv/
+venv/
+*.egg-info/
+pip-wheel-metadata/
+
+## Node (any Blazor/PWA frontend tooling)
 node_modules/
+npm-debug.log*
+yarn-error.log*
+dist/
+wwwroot/dist/
 
-# IDE
+## Docker
+*.pid
+
+## Bicep / Azure CLI
+.azure/
+
+## Secrets & local config (never commit these)
+*.env
+.env.*
+appsettings.*.local.json
+appsettings.Development.json
+secrets.json
+*.pfx
+*.key
+
+## Terraform-style local state (not used, but guard against accidental commits)
+*.tfstate
+*.tfstate.*
+
+## IDE
 .vs/
 .vscode/*
 !.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.DotSettings.user
+*.sln.iml
 
-# OS
+## OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Secrets / local config
-*.env
-local.settings.json
-appsettings.*.local.json
+## Logs
+*.log
+logs/
