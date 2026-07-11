@@ -1,0 +1,21 @@
+# .NET
+bin/
+obj/
+*.user
+
+# Node (Blazor/PWA tooling, if used)
+node_modules/
+
+# IDE
+.vs/
+.vscode/*
+!.vscode/extensions.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / local config
+*.env
+local.settings.json
+appsettings.*.local.json
