@@ -2,6 +2,7 @@
 
 **Version:** 3.0 · **Date:** July 2026
 **Stack:** .NET 10 (LTS) / Blazor / Azure / Claude via Microsoft Foundry
+**Decisions and their reasoning:** [`docs/adr/`](adr/README.md) — this document says *what* the system is; the ADRs say *why*.
 
 ---
 
@@ -24,9 +25,9 @@ It explains its reasoning, answers questions about your training, and writes the
 
 ### Delivery: a PWA
 
-The client is a Progressive Web App — a web app that installs to the iPhone home screen and behaves like a native app (own icon, no browser chrome, push notifications, offline capability), but is built and deployed like a website. No App Store, no review process, no Swift. One codebase in Blazor, deployed from the same pipeline as everything else.
+The client is a Progressive Web App — a web app that installs to the iPhone home screen and behaves like a native app (own icon, full screen, push notifications, offline capability), but is built and deployed like a website. One Blazor codebase, one pipeline, no App Store (→ [ADR-0010](adr/0010-pwa-not-native.md)).
 
-Practical consequence: gym logging works without signal in the basement, and the agent can push a notification to the lock screen.
+Practical consequence: gym logging works without signal in the basement, and the agent can reach the lock screen. The iOS constraints this imposes are in §10 and are design requirements, not surprises.
 
 ### Learning objectives (the actual purpose of this project)
 
@@ -55,28 +56,19 @@ It plans without being asked. It does not require conversation to function, and 
 
 ## 3. Data source
 
-### GarminDB (primary, and for now the only one)
+**GarminDB** is the primary and currently only source (→ [ADR-0001](adr/0001-garmindb-as-primary-source.md)).
 
 A Python tool (GPL-2.0) that authenticates against Garmin Connect via SSO and reads its internal JSON endpoints. Not HTML scraping — it uses the same private API the Connect web app uses.
 
-**What it gives us:**
-- The raw **FIT files** of every activity — with laps, per-second records (HR, pace, cadence, power, altitude) and, for strength sessions, the set-level messages the FR255 records automatically
+**What it delivers:**
+- The raw **FIT files** of every activity — laps, per-second records (HR, pace, cadence, power, altitude), and the set-level messages the FR255 records automatically during strength training
 - Daily wellness JSON — sleep, resting HR, stress, all-day HR, body battery, HRV status, weight
 
-This is strictly more data than Strava would ever hand over. Strava's read API gives summaries; the FIT file gives the whole recording.
+**How it is used:** only the `--download` stage. Its SQLite schema is never used; parsing happens in C#.
 
-**What we use it for:** only the `--download` stage. Its SQLite schema is deliberately ignored.
+**Known risks, accepted:** unofficial (Garmin can break it at any time); requires the Connect password (Key Vault); pull-based, no webhook.
 
-**Risks, stated plainly:**
-- Unofficial. Garmin can change the internal API at any time and the collector stops working.
-- Requires the Garmin Connect password (Key Vault, never in the image). No 2FA on this account, so login can be automated.
-- Pull-based. No webhook — a nightly cron job.
-
-### Strava (fallback, not built yet)
-
-Officially supported OAuth + webhooks, but the data is shallower. Kept as a documented fallback in case the Garmin collector dies permanently.
-
-**Design consequence:** the ingest layer sits behind an `IActivitySource` abstraction from day one. Swapping in Strava must mean writing one new implementation, not touching the domain. This is the one abstraction that is justified up front, because the second implementation is a known requirement, not a speculative one.
+**Strava** is a documented fallback, not built. Because a second implementation is a *known* requirement, ingest sits behind an `IActivitySource` abstraction from day one — this is the one abstraction justified up front.
 
 ---
 
@@ -119,31 +111,18 @@ Ingest Function (C#, blob trigger)          ← IActivitySource implementation
 
 ### The Garmin Collector
 
-Deliberately dumb. An Azure Container Apps Job on a nightly cron (scale-to-zero, cost ≈ 0) that does exactly two things:
+An Azure Container Apps Job on a nightly cron (scale-to-zero, cost ≈ 0) that does exactly two things:
 
-1. **Download.** Runs `garmindb_cli.py --all --download` (no `--import`, no `--analyze` — GarminDB's SQLite schema is never used). Files land on the container's local disk, which is discarded when the job ends.
-2. **Upload.** Pushes the raw files into Blob Storage. This is the only way data leaves the container, and it is what makes the blob trigger fire. Everything downstream is C#.
+1. **Download.** `garmindb_cli.py --all --download` over a **rolling 7-day window**. Files land on the container's local disk, which is discarded when the job ends.
+2. **Upload.** Pushes the raw files into Blob Storage. This is the only way data leaves the container, and it is what makes the blob trigger fire.
 
-No parsing, no schema, no logic. The GPL-2.0 license stays contained in its own container (separate process, no linking).
+No parsing, no schema, no domain knowledge. The GPL-2.0 license stays contained in its own container (separate process, no linking). When Garmin changes something, exactly one container breaks — loudly, and without corrupting anything.
 
-If Garmin changes something, exactly one container breaks — and it breaks loudly, without corrupting anything.
+The collector is **stateless by design** (→ [ADR-0007](adr/0007-rolling-window-stateless-collector.md)). Three requirements follow from that, and they are binding:
 
-#### ADR-007: Rolling window instead of persisted collector state
-
-**Context.** GarminDB's `--latest` flag only knows what's new because it can see the files it previously downloaded on local disk. A Container Apps Job is ephemeral: the filesystem is gone after every run. On the next night, GarminDB would have no memory and re-download everything from the configured start date.
-
-**Options considered.**
-- *Persistent volume:* mount Azure Files at `~/HealthData` so GarminDB keeps its state and `--latest` behaves as designed. Correct, but adds a stateful component, a mount, and a failure mode to an otherwise disposable job.
-- *Rolling window:* on every run, set the start dates to "today minus N days" and re-fetch that window unconditionally. Stateless. Costs redundant downloads.
-
-**Decision.** Rolling window, N = 7 days. The collector stays completely stateless and disposable, which is worth more than the saved bandwidth. A 7-day window also self-heals: if the job fails for three nights, the fourth run silently backfills the gap. A persisted volume would not — it would just be three nights behind.
-
-**Consequences (these are requirements, not side notes).**
-- **Blob names must be deterministic**, derived from the Garmin activity ID: `raw/activities/{activityId}.fit`, `raw/wellness/{date}.json`. Re-uploading the same activity overwrites the same blob instead of creating seven copies.
-- **Ingest must be idempotent.** The same blob will be re-uploaded (and thus re-trigger the function) up to seven times. Deduplication via `DedupKey` must make reprocessing a no-op, not a duplicate row. This is also a good property to have anyway: Azure blob triggers can deliver more than once.
-- **Interpretation must not re-run** on an activity that already has a `SessionInterpretation`. Otherwise the rolling window would burn seven Haiku calls per session instead of one.
-- *Optional optimization, later:* check blob existence before uploading and skip unchanged files. Saves triggers and LLM guard checks. Not required for correctness — the idempotency above already guarantees that.
-- If the backfill window ever needs to be larger (e.g. after a long outage), it is a config change, not a code change.
+- **Deterministic blob names**, derived from the Garmin activity ID: `raw/activities/{activityId}.fit`, `raw/wellness/{date}.json`.
+- **Ingest is idempotent.** The same activity is re-uploaded and re-triggered up to seven times, and blob triggers can double-deliver regardless. Reprocessing must be a no-op via `DedupKey`. There is an explicit test for this.
+- **Interpretation never re-runs** on an activity that already has a `SessionInterpretation` — otherwise one LLM call per session becomes seven.
 
 ---
 
@@ -260,30 +239,25 @@ Message: Id, ConversationId, Role (user|assistant|tool),
 ```
 The conversation *is* an input to planning. It gets stored, summarized, and fed back.
 
-### Athlete configuration — three tables, three owners
+### Athlete configuration — split by owner, not by topic
 
-The distinction matters: what *you* configure, what *changes over time*, and what the *agent believes*. Collapsing these into one profile table is the mistake that quietly ruins the data.
+Four kinds of truth, four homes (→ [ADR-0008](adr/0008-athlete-data-split-by-owner.md)). Collapsing these into one profile table is the mistake that quietly ruins the data.
 
 #### AthleteProfile — user-owned, configurable, stable
 ```
 Id (singleton), BirthDate, Sex, HeightCm,
-HrMax, HrMaxSource (measured|estimated),   -- Tanaka estimate as default, override when tested
-HrZones (JSON),                            -- derived, or manually set
-TrainingAge, EquipmentAccess (JSON),
+HrMax, HrMaxSource (measured|estimated),   -- tells the metrics engine how far to trust the zones
+HrZones (JSON), TrainingAge, EquipmentAccess (JSON),
 WeeklyTimeBudgetHours, SleepTargetHours,
 Preferences, Dislikes, Units, UpdatedAt
 ```
-Edited on a settings page in the PWA. **The agent may not write here.** Store the birth date, not the age — then it never goes stale.
-
-`HrMaxSource` is not cosmetic: it tells the metrics engine how much to trust the zone boundaries. An estimated HRmax makes time-in-zone a rough signal; a measured one makes it a real one.
+Edited on a settings page in the PWA. **The agent may not write here.** Store the birth date, not the age.
 
 #### BodyMeasurement — a time series, not a profile field
 ```
 Date, WeightKg, BodyFatPct, MuscleMassKg, Source (garmin|manual)
 ```
-Weight and body composition change. Putting them in the profile means overwriting your own history on every update — and the history is exactly what the coach needs ("weight flat for 8 weeks, but the goal is mass"). A state is not a trajectory. Same mistake class as storing only average heart rate.
-
-Comes in automatically from a Garmin scale via the collector; manually editable.
+**Never** store weight or body composition on the profile: overwriting destroys the history the coach needs. A state is not a trajectory. Arrives automatically from a Garmin scale; manually editable.
 
 #### Injury — structured, because the agent has to reason with it
 ```
@@ -292,7 +266,15 @@ Status (active|resolved|recurring), Severity,
 Constraints (JSON),           -- e.g. "no deep knee flexion under load"
 Notes, Source (user|agent), CreatedAt
 ```
-Free text in a profile field is something the agent can only *hope* to honour. A structured constraint is something it can be held to — and something the eval harness can assert on.
+`Constraints` are machine-readable, not prose. Free text is something the agent can only *hope* to honour; a structured constraint is something the eval harness can assert on.
+
+#### AgentMemory — machine-written, kept separate
+```
+Id, UpdatedAt, Summary, Facts (JSON), Provenance
+```
+Compressed context so the agent doesn't need the full history in every prompt.
+
+**The boundary is strict:** the agent may create goals and injuries (tagged `Source = agent`), but may never silently rewrite `AthleteProfile`.
 
 ### Goal
 ```
@@ -301,15 +283,6 @@ Priority, TargetDate, TargetMetric, Active,
 Source (user|agent), CreatedAt
 ```
 Editable in the UI **and** settable from chat ("I want a sub-20 5k by autumn" creates a goal).
-
-### AgentMemory — what the agent has learned, kept separate
-```
-Id, UpdatedAt, Summary,          -- rolling LLM-maintained summary
-Facts (JSON), Provenance
-```
-Compressed context so the agent doesn't need the full history in every prompt.
-
-**The boundary is strict:** the agent may create goals and injuries (marked with `Source = agent`), but it may never silently rewrite `AthleteProfile`. The user must always be able to see what the system *believes* about them, separately from what they *told* it. Machine-written memory and human-authored configuration are different kinds of truth and are stored as such.
 
 ### NutritionNote (optional, low-friction)
 ```
@@ -368,7 +341,7 @@ This is the only code that computes numbers. Every formula carries an XML doc co
 - **Days since load, per muscle group and per energy system**
 - **Ramp rate** — how fast load is increasing week over week
 
-Explicitly *not* used: ACWR and Foster monotony. Both come from single-sport elite settings with homogeneous load and don't survive contact with a training mix that includes padel and five-a-side. This decision goes in an ADR.
+Explicitly **not** used: ACWR and Foster monotony (→ [ADR-0003](adr/0003-no-acwr-or-monotony.md)).
 
 ---
 
@@ -467,15 +440,16 @@ The plan is a living artifact. It exists whether or not you talk to it, and it r
 
 ### Calendar
 
-Accepted plan items are written to **Google Calendar** via the Google Calendar API. It syncs to iOS natively, so sessions show up on the phone without any extra work.
+Accepted plan items are written to **Google Calendar** (→ [ADR-0006](adr/0006-google-calendar-one-way.md)). It syncs to iOS natively.
 
-- **Auth:** OAuth 2.0, one-time consent, refresh token in Key Vault. No service account — this is a personal calendar, not a workspace one.
-- **A dedicated "Training" calendar**, not the main one. Keeps the agent's writes isolated and makes it trivial to wipe everything if a replanning bug goes wrong.
-- **Idempotent upsert.** `CalendarEventId` on `PlanItem` links the two. Replanning moves or rewrites the event; a superseded item's event is cancelled. Never create a duplicate — always upsert against the stored ID.
-- **One-way sync (app → calendar).** Reading changes back from the calendar is deliberately out of scope: availability is communicated in chat, not by moving events around. If that turns out to be annoying in practice, revisit it — but don't build a bidirectional sync speculatively.
-- The event body carries the agent's rationale, so the *why* is visible on the phone without opening the app.
+Binding requirements from that decision:
+- OAuth 2.0, one-time consent, refresh token in Key Vault. Not a service account.
+- A **dedicated "Training" calendar**, never the main one.
+- **Idempotent upsert** against the stored `CalendarEventId`. Replanning moves or rewrites the event; a superseded plan item cancels its event. Never create a duplicate.
+- **One-way sync (app → calendar).** Availability is communicated in chat, not by moving events.
+- The event body carries the agent's rationale, so the *why* is visible on the phone.
 
-Google is the one external dependency besides the Garmin collector. It sits behind an `ICalendarSink` interface — not because a second implementation is planned, but because it's an external boundary, and that's exactly where dependency inversion earns its keep.
+Behind `ICalendarSink` — an external boundary, which is exactly where dependency inversion earns its keep.
 
 ---
 
@@ -575,7 +549,7 @@ Scoring: partly programmatic (does the plan have property X), partly LLM-as-judg
 
 ### Documentation (explicitly wanted, not an afterthought)
 - **README.md** — what it is, how to run it, how to deploy it, architecture at a glance
-- **ADRs** in `docs/adr/` — every significant decision gets a numbered record: context, options, decision, consequences. Known ADRs already: *ADR-001 GarminDB over Strava as primary source*, *ADR-002 Metrics computed deterministically, not by the LLM*, *ADR-003 No ACWR / Foster monotony for heterogeneous training*, *ADR-004 Claude via Foundry rather than the Anthropic API*, *ADR-005 Table-per-type for activity detail*, *ADR-006 Google Calendar as a one-way sink*, *ADR-007 Rolling window instead of persisted collector state*.
+- **ADRs** in [`docs/adr/`](adr/README.md) — every significant decision gets a numbered record: context, options, decision, consequences. ADRs are immutable: a decision that turns out wrong is superseded, never edited. Ten are already written; write a new one whenever a future reader would otherwise have to reverse-engineer *why*.
 - **XML doc comments on every public member.** For anything in the metrics engine, the comment must state the formula and cite its source (e.g. Epley 1985; Schoenfeld et al. on weekly hard sets; Banister TRIMP; Coggan on aerobic decoupling). If a number can't be traced to a source, it doesn't belong in the engine.
 - **Inline comments at genuinely non-obvious logic** — FIT quirks, deduplication rules, timezone handling, HR-dropout compensation. Not on `i++`.
 - **Prompt files are documented artifacts**, versioned in the repo with the reasoning behind them. Prompts are code.

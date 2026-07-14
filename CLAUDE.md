@@ -4,8 +4,12 @@ An AI training coach that plans autonomously from Garmin data and adapts when I 
 Delivered as a Blazor PWA on Azure. This is a learning project: the point is that **I understand
 the cloud, the agent, and the architecture** — not that code appears quickly.
 
-**Architecture, data model, agent design, phases: @docs/spec.md**
-Read it before proposing anything structural. Don't re-derive decisions that are already made there.
+**What the system is → @docs/spec.md** (architecture, data model, agent design, runtime flow, phases)
+**Why it is that way → `docs/adr/`** (ten decisions, with the options that were rejected)
+
+Read the spec before proposing anything structural. If you're about to argue for a different
+approach, check the ADRs first — it may already have been considered and rejected for a reason.
+If it hasn't, say so and propose a new ADR.
 
 ---
 
@@ -40,19 +44,19 @@ az deployment group create -g <rg> -f infra/main.bicep
 
 These exist because breaking them is easy, tempting, and expensive.
 
-**1. The LLM interprets and builds. Deterministic code measures.**
+**1. The LLM interprets and builds. Deterministic code measures.** (ADR-0002)
 Sums, trends, zone times, tonnage, e1RM → C#, tested, documented. The LLM receives *computed
 metrics* and turns them into meaning and plans. If you're about to let the LLM add up numbers,
 you're about to make the system unreproducible and untestable. Don't.
 
 **2. Ingest must be idempotent.**
-The collector is stateless and re-downloads a rolling 7-day window every night (ADR-007). The
+The collector is stateless and re-downloads a rolling 7-day window every night (ADR-0007). The
 same activity is uploaded and re-triggered up to seven times, and blob triggers can double-fire
 anyway. Deterministic blob names (`raw/activities/{activityId}.fit`) + `DedupKey` → reprocessing
 is a no-op. **And never re-run interpretation on an activity that already has one** — that turns
 1 LLM call per session into 7.
 
-**3. Never write to `AthleteProfile` from the agent.**
+**3. Never write to `AthleteProfile` from the agent.** (ADR-0008)
 Athlete data is split by *owner*, not by topic:
 | Table | Owner | Note |
 |---|---|---|
@@ -61,12 +65,12 @@ Athlete data is split by *owner*, not by topic:
 | `Goal`, `Injury` | user or agent | always tag `Source`. Injuries carry machine-readable `Constraints`, not prose |
 | `AgentMemory` | agent only | machine-written summary, kept separate from human config |
 
-**4. The Garmin collector stays dumb.**
+**4. The Garmin collector stays dumb.** (ADR-0001)
 It downloads and uploads. That's all. No parsing, no schema, no domain knowledge. GarminDB's
 SQLite schema is never used — FIT parsing happens in C#. It's an unofficial, fragile dependency
 and it lives behind a process boundary so that when it breaks, only it breaks.
 
-**5. Plans are superseded, never overwritten.**
+**5. Plans are superseded, never overwritten.** (ADR-0009)
 When the agent replans, the old `PlanItem` stays with its rationale and a `SupersededById`.
 The user must be able to see *why* the week changed.
 
@@ -99,6 +103,8 @@ The user must be able to see *why* the week changed.
 - **README.md** stays current: what it is, how to run, how to deploy, architecture at a glance.
 - **ADRs in `docs/adr/`.** Numbered: context, options, decision, consequences. If you make a call
   a future reader would otherwise have to reverse-engineer, **write the ADR without being asked.**
+  ADRs are **immutable** — a decision that turns out wrong is superseded by a new ADR, never edited.
+  Don't restate an ADR's reasoning in the spec or in code comments; link to it.
 - **XML doc comments on every public member.** In the metrics engine the comment must state the
   formula *and cite its source* (Epley 1985 for e1RM; Schoenfeld et al. for weekly hard sets;
   Banister for TRIMP; Coggan for aerobic decoupling). **A number that can't be traced to a source
