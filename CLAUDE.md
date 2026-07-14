@@ -1,127 +1,29 @@
 # Training Coach
 
-A personal training coach that plans on its own and listens when you have something to say.
-Ingests everything recorded by a Garmin watch, measures what actually happened, and lets an AI
-agent plan training from history, goals, optional conversation, and optional nutrition notes.
-It works with zero user input; chat is an optional steering layer. It explains its reasoning,
-replans when you push back, and writes sessions into Google Calendar.
+An AI training coach that plans autonomously from Garmin data and adapts when I talk to it.
+Delivered as a Blazor PWA on Azure. This is a learning project: the point is that **I understand
+the cloud, the agent, and the architecture** — not that code appears quickly.
 
-Delivered as a PWA — a web app that installs to the iOS home screen, supports push
-notifications, and works offline in the gym. One Blazor codebase, no App Store.
+**Architecture, data model, agent design, phases: @docs/spec.md**
+Read it before proposing anything structural. Don't re-derive decisions that are already made there.
 
-**Full spec: @docs/spec.md** — always check there before making architecture decisions.
+---
+
+## Status
+
+> **Current phase: 0 — reconnaissance.** No production code yet.
+> Next milestone: confirm FIT files contain `set` messages, then build the walking skeleton.
+
+*(Keep this block current. It's the first thing that tells you what "helpful" means right now.)*
+
+---
 
 ## Stack
 
-- .NET 10 (LTS), C# throughout — except one isolated Python container
-- Blazor Web App as a PWA (iOS-installable, offline gym logging, web push)
-- ASP.NET Core Web API
-- EF Core → Azure SQL (free tier)
-- Azure Container Apps, Container Apps Jobs, Functions, Blob Storage, Key Vault
-- Claude via Microsoft Foundry (Entra auth, no API keys)
-- Google Calendar API for scheduling (OAuth, dedicated training calendar, one-way sync)
-- Bicep for IaC, GitHub Actions for CI/CD
-
-## Core principles (non-negotiable)
-
-**1. The LLM interprets and builds. Deterministic code measures.**
-The metrics engine measures — from raw device data, with documented, tested, reproducible
-formulas. The LLM interprets those measurements and builds plans from them. It NEVER computes
-a number it could be handed instead. If you're tempted to let the LLM sum something: don't.
-
-**2. Data sources are replaceable and isolated.**
-The Garmin collector is an unofficial, fragile Python fetcher. It runs in its own container,
-delivers only raw files to Blob Storage, and knows nothing about the domain model. Its SQLite
-schema is NOT used — parsing happens in C# with the FIT SDK. All ingest goes through
-`IActivitySource` so Strava can be swapped in later without touching the domain.
-
-**3. The agent is autonomous by default, steerable on demand.**
-It plans a week every Sunday from data alone — no conversation required. Chat is an optional
-control surface: when the user says something, the plan adapts. The primary UI surface is the
-plan, not the chat. The agent nudges after 5 days of silence, asks when it genuinely needs
-input, and is otherwise quiet. Plans are superseded, never silently overwritten.
-
-## Data ownership (easy to get wrong)
-
-Athlete data is split by who owns it. Never collapse these into one profile table:
-- `AthleteProfile` — user-configured, stable (birth date, height, HRmax + source, preferences).
-  **The agent may NOT write here.**
-- `BodyMeasurement` — a time series (weight, body fat). Never a profile field: overwriting it
-  destroys the history the coach needs.
-- `Injury` and `Goal` — structured, agent may create them, always marked with `Source`.
-  Injuries carry machine-readable `Constraints`, not free text.
-- `AgentMemory` — machine-written rolling summary, kept separate from human-authored config.
-
-## Design
-
-- **SOLID throughout.** Dependency Inversion at the ingest boundary; Single Responsibility in
-  the metrics engine (one calculator per metric family, not a god class).
-- **Abstract where a second implementation is known or the boundary is external.**
-  `IActivitySource` is justified (Strava is planned). `IRepository<T>` over EF Core is not.
-  No speculative abstraction — the second occurrence earns the interface, not the first.
-- **Patterns where they carry weight:** Strategy for metric calculators, Adapter at the source
-  boundary, Chain of Responsibility for the ingest pipeline, Command for agent tool calls.
-  Use them when they name something real; don't decorate.
-
-## Documentation (explicitly required, not an afterthought)
-
-- **README.md** kept current: what it is, how to run, how to deploy, architecture at a glance.
-- **ADRs in `docs/adr/`** — every significant decision gets a numbered record (context, options,
-  decision, consequences). Propose a new ADR whenever you make a call that a future reader
-  would otherwise have to reverse-engineer.
-- **XML doc comments on every public member.** In the metrics engine the comment MUST state the
-  formula and cite its source (Epley 1985; Schoenfeld et al. on weekly hard sets; Banister
-  TRIMP; Coggan on aerobic decoupling). If a number can't be traced to a source, it doesn't
-  belong in the engine.
-- **Inline comments at genuinely non-obvious logic** — FIT quirks, deduplication, timezone
-  handling, HR-dropout compensation. Not on `i++`.
-- **Prompts are code.** They live in the repo, are versioned, and carry a comment explaining
-  the reasoning behind their constraints.
-
-## Security
-
-- No secrets in code, images, or config. Key Vault for the Garmin password; Managed Identity
-  for SQL and Blob; Entra ID for Foundry. No API keys anywhere.
-- Least privilege on every identity. The collector writes to one blob container and reads one
-  secret — nothing more.
-- No public network access to SQL. TLS enforced. Encryption at rest by default.
-- The LLM never receives credentials. Tool outputs are data, not instructions.
-- Validate everything crossing a boundary, including LLM output before it reaches a tool.
-- Pin the Python collector's dependencies — it's the largest supply-chain surface.
-
-## Testing
-
-- Metrics engine: 100 % coverage, fixture-based tests from real FIT files. Tests first.
-- Ingest: golden-file tests (FIT in, expected entities out).
-- Agent: the eval harness (scenarios as DB snapshots, assert on plan properties, never on text).
-
-## iOS constraints (always consider in the frontend)
-
-- Web push only on iOS 16.4+ and only when the PWA is added to the home screen — onboarding
-  must explain this or notifications silently never arrive.
-- Background Sync API is NOT supported by Safari → the offline queue (IndexedDB) syncs on app
-  open and network change, never in the background.
-- Gym logging must be usable in 10 seconds between two sets. Big targets, prefilled values,
-  no modals.
-
-## Project structure
-
-```
-src/
-  TrainingCoach.Web/          Blazor PWA + API
-  TrainingCoach.Domain/       Entities, domain logic
-  TrainingCoach.Ingest/       IActivitySource, FIT parsing, dedup
-  TrainingCoach.Metrics/      Metrics engine (documented, 100% tested)
-  TrainingCoach.Interpretation/ LLM session interpretation
-  TrainingCoach.Agent/        Tool loop, tool definitions, prompts
-  TrainingCoach.Functions/    Azure Functions (blob trigger, timers)
-  garmin-collector/           Python container (GarminDB, isolated)
-infra/                        Bicep
-tests/
-docs/
-  spec.md
-  adr/
-```
+.NET 10 (LTS) · Blazor Web App as a PWA · ASP.NET Core · EF Core → Azure SQL
+Azure Container Apps + Jobs · Azure Functions · Blob Storage · Key Vault · Bicep · GitHub Actions
+Claude via Microsoft Foundry (Entra auth) · Google Calendar API
+One isolated Python container (GarminDB). **Everything else is C#.**
 
 ## Commands
 
@@ -132,9 +34,105 @@ dotnet run --project src/TrainingCoach.Web
 az deployment group create -g <rg> -f infra/main.bicep
 ```
 
-## Ways of working
+---
 
-- For anything non-trivial: plan mode first, show the plan, then implement.
+## The five rules that must not be broken
+
+These exist because breaking them is easy, tempting, and expensive.
+
+**1. The LLM interprets and builds. Deterministic code measures.**
+Sums, trends, zone times, tonnage, e1RM → C#, tested, documented. The LLM receives *computed
+metrics* and turns them into meaning and plans. If you're about to let the LLM add up numbers,
+you're about to make the system unreproducible and untestable. Don't.
+
+**2. Ingest must be idempotent.**
+The collector is stateless and re-downloads a rolling 7-day window every night (ADR-007). The
+same activity is uploaded and re-triggered up to seven times, and blob triggers can double-fire
+anyway. Deterministic blob names (`raw/activities/{activityId}.fit`) + `DedupKey` → reprocessing
+is a no-op. **And never re-run interpretation on an activity that already has one** — that turns
+1 LLM call per session into 7.
+
+**3. Never write to `AthleteProfile` from the agent.**
+Athlete data is split by *owner*, not by topic:
+| Table | Owner | Note |
+|---|---|---|
+| `AthleteProfile` | user only | birth date (not age), height, HRmax + source, preferences |
+| `BodyMeasurement` | time series | weight, body fat — **never** a profile field; overwriting kills the history |
+| `Goal`, `Injury` | user or agent | always tag `Source`. Injuries carry machine-readable `Constraints`, not prose |
+| `AgentMemory` | agent only | machine-written summary, kept separate from human config |
+
+**4. The Garmin collector stays dumb.**
+It downloads and uploads. That's all. No parsing, no schema, no domain knowledge. GarminDB's
+SQLite schema is never used — FIT parsing happens in C#. It's an unofficial, fragile dependency
+and it lives behind a process boundary so that when it breaks, only it breaks.
+
+**5. Plans are superseded, never overwritten.**
+When the agent replans, the old `PlanItem` stays with its rationale and a `SupersededById`.
+The user must be able to see *why* the week changed.
+
+---
+
+## iOS gotchas (they bite silently)
+
+- Web push works **only** on iOS 16.4+ **and only** if the PWA was added to the home screen.
+  Without an onboarding step that explains this, notifications never arrive and nothing errors.
+- Safari does **not** support the Background Sync API. The offline gym queue (IndexedDB) syncs
+  on app open and on network change — never in the background. Don't design around background sync.
+- Gym logging must be usable in 10 seconds between two sets: big targets, prefilled last values,
+  no modals.
+
+---
+
+## Design
+
+- **SOLID.** Dependency Inversion at external boundaries (`IActivitySource`, `ICalendarSink`).
+  Single Responsibility in the metrics engine: one calculator per metric family, never a god class.
+- **Abstract at external boundaries or when a second implementation is known — nowhere else.**
+  `IActivitySource` is justified (Strava is a planned fallback). `IRepository<T>` over EF Core is not.
+  The second occurrence earns the interface, not the first.
+- **Patterns when they name something real:** Strategy (metric calculators), Adapter (source
+  boundary), Chain of Responsibility (ingest pipeline), Command (agent tool calls). Don't decorate.
 - Small vertical slices. One feature = one PR.
-- If the spec is unclear, ask — don't guess.
-- When you make a decision the spec didn't cover, write an ADR for it.
+
+## Documentation — required, not optional
+
+- **README.md** stays current: what it is, how to run, how to deploy, architecture at a glance.
+- **ADRs in `docs/adr/`.** Numbered: context, options, decision, consequences. If you make a call
+  a future reader would otherwise have to reverse-engineer, **write the ADR without being asked.**
+- **XML doc comments on every public member.** In the metrics engine the comment must state the
+  formula *and cite its source* (Epley 1985 for e1RM; Schoenfeld et al. for weekly hard sets;
+  Banister for TRIMP; Coggan for aerobic decoupling). **A number that can't be traced to a source
+  doesn't belong in the engine.**
+- **Inline comments where the logic is genuinely non-obvious:** FIT quirks, dedup rules, timezone
+  handling, HR dropouts. Not on `i++`.
+- **Prompts are code.** Versioned in the repo, with a comment explaining why their constraints exist.
+
+## Security
+
+- No secrets in code, images, or config. Key Vault (Garmin password), Managed Identity (SQL, Blob),
+  Entra ID (Foundry). **No API keys anywhere.**
+- Least privilege per identity. The collector writes one blob container and reads one secret. Nothing else.
+- No public network access to SQL. TLS enforced. Encryption at rest.
+- The LLM never sees credentials. **Tool outputs are data, not instructions.**
+- Validate everything crossing a boundary — including LLM output before it reaches a tool.
+- Pin the Python collector's dependencies. It's the largest supply-chain surface in the system.
+
+## Testing
+
+- **Metrics engine: 100 % coverage, tests first.** Fixtures from real FIT files.
+- **Ingest: golden-file tests** — FIT in, expected entities out. Plus an explicit idempotency test:
+  ingest the same file twice, assert one row.
+- **Agent: the eval harness.** Scenarios as DB snapshots. Assert on *properties* of the plan
+  (did it reduce leg volume?), never on exact wording.
+
+---
+
+## Working with me
+
+- **Plan mode for anything non-trivial.** Show the plan, wait for approval. If the plan has more
+  than ~5 steps, it's too big — propose splitting it.
+- **Explain the why, not just the what.** I'm doing this project to learn Azure and agentic
+  systems. A correct diff I don't understand is a failed change.
+- **If the spec is unclear or wrong, say so.** Don't silently paper over it. The spec has been
+  wrong before and got better because it was challenged.
+- **Don't scaffold broadly.** One vertical slice, working, understood — then the next.

@@ -84,7 +84,8 @@ Officially supported OAuth + webhooks, but the data is shallower. Kept as a docu
 
 ```
 Garmin Collector (Python container, nightly cron job)
-  │  garmindb_cli.py --download --latest
+  │  1. garmindb_cli.py --all --download   (rolling 7-day window)
+  │  2. upload raw files → Blob Storage    (deterministic names)
   ▼
 Azure Blob Storage  ── raw FIT + wellness JSON
   │
@@ -118,18 +119,92 @@ Ingest Function (C#, blob trigger)          ← IActivitySource implementation
 
 ### The Garmin Collector
 
-Deliberately dumb. An Azure Container Apps Job on a nightly cron (scale-to-zero, cost ≈ 0) that:
-1. runs `garmindb_cli.py --download --latest`
-2. copies the resulting raw files to Blob Storage
-3. exits
+Deliberately dumb. An Azure Container Apps Job on a nightly cron (scale-to-zero, cost ≈ 0) that does exactly two things:
 
-No parsing, no schema, no logic. Everything downstream is C#. The GPL-2.0 license stays contained in its own container (separate process, no linking).
+1. **Download.** Runs `garmindb_cli.py --all --download` (no `--import`, no `--analyze` — GarminDB's SQLite schema is never used). Files land on the container's local disk, which is discarded when the job ends.
+2. **Upload.** Pushes the raw files into Blob Storage. This is the only way data leaves the container, and it is what makes the blob trigger fire. Everything downstream is C#.
+
+No parsing, no schema, no logic. The GPL-2.0 license stays contained in its own container (separate process, no linking).
 
 If Garmin changes something, exactly one container breaks — and it breaks loudly, without corrupting anything.
 
+#### ADR-007: Rolling window instead of persisted collector state
+
+**Context.** GarminDB's `--latest` flag only knows what's new because it can see the files it previously downloaded on local disk. A Container Apps Job is ephemeral: the filesystem is gone after every run. On the next night, GarminDB would have no memory and re-download everything from the configured start date.
+
+**Options considered.**
+- *Persistent volume:* mount Azure Files at `~/HealthData` so GarminDB keeps its state and `--latest` behaves as designed. Correct, but adds a stateful component, a mount, and a failure mode to an otherwise disposable job.
+- *Rolling window:* on every run, set the start dates to "today minus N days" and re-fetch that window unconditionally. Stateless. Costs redundant downloads.
+
+**Decision.** Rolling window, N = 7 days. The collector stays completely stateless and disposable, which is worth more than the saved bandwidth. A 7-day window also self-heals: if the job fails for three nights, the fourth run silently backfills the gap. A persisted volume would not — it would just be three nights behind.
+
+**Consequences (these are requirements, not side notes).**
+- **Blob names must be deterministic**, derived from the Garmin activity ID: `raw/activities/{activityId}.fit`, `raw/wellness/{date}.json`. Re-uploading the same activity overwrites the same blob instead of creating seven copies.
+- **Ingest must be idempotent.** The same blob will be re-uploaded (and thus re-trigger the function) up to seven times. Deduplication via `DedupKey` must make reprocessing a no-op, not a duplicate row. This is also a good property to have anyway: Azure blob triggers can deliver more than once.
+- **Interpretation must not re-run** on an activity that already has a `SessionInterpretation`. Otherwise the rolling window would burn seven Haiku calls per session instead of one.
+- *Optional optimization, later:* check blob existence before uploading and skip unchanged files. Saves triggers and LLM guard checks. Not required for correctness — the idempotency above already guarantees that.
+- If the backfill window ever needs to be larger (e.g. after a long outage), it is a config change, not a code change.
+
 ---
 
-## 5. Data model
+## 5. Runtime workflow — end to end
+
+What actually happens, in order. Everything below is automatic; nothing requires the user to open the app.
+
+### Nightly — data arrives
+
+| # | Where | What happens |
+|---|---|---|
+| 1 | Container Apps Job (cron, ~03:00) | Collector starts, reads the Garmin password from Key Vault via Managed Identity |
+| 2 | Python container | `garmindb_cli.py --all --download` over a rolling 7-day window (ADR-007). Files land on the container's local disk. |
+| 3 | Python container | Uploads the raw files to Blob Storage under deterministic names (`raw/activities/{activityId}.fit`). **This is the only way data leaves the container.** Job exits, scales to zero. |
+
+**From here everything is C#.**
+
+| # | Where | What happens |
+|---|---|---|
+| 4 | Azure Function | Blob trigger fires, once per file |
+| 5 | Ingest | FIT SDK parses `session`, `lap`, `record`, `set` messages. Wellness JSON is deserialized. |
+| 6 | Ingest | Maps into the domain model: `Activity`, `ActivityLap`, `ActivitySample`, `StrengthSet`, `DailyWellness` |
+| 7 | Ingest | **Deduplicates via `DedupKey`.** The rolling window means the same activity arrives up to seven times, and blob triggers can fire more than once regardless. Reprocessing must be a no-op. |
+| 8 | Azure SQL | Persist via EF Core, authenticated with Managed Identity |
+
+### Per new activity — measure, then interpret
+
+| # | Where | What happens |
+|---|---|---|
+| 9 | Metrics Engine (C#) | Computes the session's metrics: time in HR zones, interval structure, HRR, tonnage, hard sets per muscle group, e1RM, aerobic decoupling. Deterministic, tested, documented. |
+| 10 | Interpretation Function | Sends those **metrics** (not the raw samples) to Claude Haiku → persists a `SessionInterpretation`. **Guard: skip entirely if one already exists** — otherwise the rolling window burns 7 LLM calls per session instead of 1. |
+| 11 | Coach Agent | Runs **only if there is a reason to**: the session diverged from the plan, or the interpretation returned a non-empty `questions_for_athlete`. Then it may replan the rest of the week and send one push notification. Otherwise: silence. |
+
+### Sundays — the week gets planned
+
+| # | Where | What happens |
+|---|---|---|
+| 12 | Timer Function | Fires Sunday evening |
+| 13 | Coach Agent | Tool loop: reads metrics, wellness, goals, availability, recent conversation, athlete profile → drafts next week |
+| 14 | Agent | Writes `PlanItem`s (status `proposed`) |
+| 15 | Agent | Upserts events into Google Calendar via `CalendarEventId` |
+| 16 | Agent | One push notification: "Here's next week." |
+
+### Whenever the user says something — the plan adapts
+
+The user writes in the chat ("knee hurts", "only Tuesday this week", "why intervals on Thursday?"). The agent runs its tool loop, supersedes the affected `PlanItem`s (never deletes them), updates the calendar, and answers. This is optional — the system above works whether or not it ever happens.
+
+### When the app speaks up
+
+Push notifications fire on exactly four triggers, and nothing else:
+
+1. Sunday: the week's proposal is ready
+2. Five days without any conversation: a single nudge
+3. The agent genuinely needs input to plan well
+4. After a notable session: an optional question or a replan
+
+**Silence is the default.** A coach that pings you daily gets muted, and a muted coach is useless.
+
+---
+
+## 6. Data model
 
 Heterogeneous training does not fit one flat table. A 5×5 squat session and a threshold interval run share almost nothing except a start time. So: a common core, plus typed detail.
 
@@ -176,7 +251,7 @@ Date, SleepMinutes, SleepScore, DeepSleepMin, RemSleepMin,
 RestingHr, StressAvg, BodyBattery, HrvStatus, HrvMs, WeightKg
 ```
 
-### SessionInterpretation — what the LLM adds (see §7)
+### SessionInterpretation — what the LLM adds (see §8)
 
 ### Conversation, Message — the chat is first-class
 ```
@@ -263,7 +338,7 @@ TokensIn, TokensOut, CachedTokens, CostEur, Outcome, ErrorMessage
 
 ---
 
-## 6. Metrics Engine (deterministic, documented, tested)
+## 7. Metrics Engine (deterministic, documented, tested)
 
 This is the only code that computes numbers. Every formula carries an XML doc comment with a reference to the literature it comes from. 100 % test coverage, no exceptions.
 
@@ -297,7 +372,7 @@ Explicitly *not* used: ACWR and Foster monotony. Both come from single-sport eli
 
 ---
 
-## 7. Interpretation (the LLM layer)
+## 8. Interpretation (the LLM layer)
 
 **What "interpretation" means here, concretely:** the metrics engine can tell you that a session had 42 minutes in zone 4, six work laps, and an HRR of 28 bpm. It cannot tell you that this was a threshold session, that it was harder than intended because you'd slept badly, or that it competes with tomorrow's leg day. That translation — from measurements to *meaning* — is the LLM's job.
 
@@ -345,7 +420,7 @@ Note `questions_for_athlete` — this is how the interpretation layer hands work
 
 ---
 
-## 8. The Coach Agent
+## 9. The Coach Agent
 
 **Model:** Claude Sonnet/Opus via Foundry. Messages API, tool use, prompt caching on the system prompt and athlete profile (this is the main cost lever).
 
@@ -376,7 +451,7 @@ The plan is a living artifact. It exists whether or not you talk to it, and it r
 
 | Tool | Purpose |
 |---|---|
-| `get_metrics(window, filters)` | Everything from the metrics engine |
+| `get_metrics(window, filters)` | Everything from the metrics engine (§7) |
 | `get_activities(from, to, detail)` | Sessions with interpretations; optionally laps/sets |
 | `get_exercise_history(exercise)` | Progression, e1RM, stagnation |
 | `get_wellness(from, to)` | Sleep, RHR baseline deviation, HRV trend |
@@ -404,7 +479,7 @@ Google is the one external dependency besides the Garmin collector. It sits behi
 
 ---
 
-## 9. iOS constraints (designed in from the start)
+## 10. iOS constraints (designed in from the start)
 
 - **Web push** works only on iOS 16.4+ **and only** when the PWA is added to the home screen → an onboarding step in the app must explain this, or notifications silently never arrive.
 - **Background Sync API** is not supported by Safari → the offline gym queue (IndexedDB) syncs on app open and on network change, never in the background.
@@ -412,7 +487,7 @@ Google is the one external dependency besides the Garmin collector. It sits behi
 
 ---
 
-## 10. Azure resources & cost
+## 11. Azure resources & cost
 
 | Component | Service | Cost |
 |---|---|---|
@@ -436,7 +511,7 @@ Google is the one external dependency besides the Garmin collector. It sits behi
 
 ---
 
-## 11. Phases
+## 12. Phases
 
 ### Phase 0 – Week 0: Reconnaissance (no production code)
 - Run GarminDB locally: `pip install garmindb`, configure, `garmindb_cli.py --all --download`
@@ -463,14 +538,14 @@ Tool loop in C#. **Autonomous weekly planning first** — the agent should produ
 Build it in that order deliberately: if the agent can't plan well without being talked to, chat will just be a way to paper over a weak planner.
 
 ### Phase 6 – Weeks 12–13: Reach
-Web push (VAPID) with the notification rules from §8. Google Calendar integration (OAuth, dedicated training calendar, idempotent upsert). Nutrition notes.
+Web push (VAPID) with the notification rules from §9. Google Calendar integration (OAuth, dedicated training calendar, idempotent upsert). Nutrition notes.
 
 ### Phase 7 – Week 14+: Rigor
 Eval harness. Offline gym logging. Strava fallback source (proves the abstraction was real).
 
 ---
 
-## 12. Eval harness (not optional)
+## 13. Eval harness (not optional)
 
 Scenarios as database snapshots that the agent runs against. Assert on *properties* of the plan, never on exact text.
 
@@ -491,7 +566,7 @@ Scoring: partly programmatic (does the plan have property X), partly LLM-as-judg
 
 ---
 
-## 13. Engineering conventions
+## 14. Engineering conventions
 
 ### Design
 - **SOLID throughout.** Especially Dependency Inversion at the ingest boundary (`IActivitySource`) and Single Responsibility in the metrics engine — one calculator per metric family, not a god class.
@@ -500,7 +575,7 @@ Scoring: partly programmatic (does the plan have property X), partly LLM-as-judg
 
 ### Documentation (explicitly wanted, not an afterthought)
 - **README.md** — what it is, how to run it, how to deploy it, architecture at a glance
-- **ADRs** in `docs/adr/` — every significant decision gets a numbered record: context, options, decision, consequences. Known ADRs already: *ADR-001 GarminDB over Strava as primary source*, *ADR-002 Metrics computed deterministically, not by the LLM*, *ADR-003 No ACWR / Foster monotony for heterogeneous training*, *ADR-004 Claude via Foundry rather than the Anthropic API*, *ADR-005 Table-per-type for activity detail*, *ADR-006 Google Calendar as a one-way sink*.
+- **ADRs** in `docs/adr/` — every significant decision gets a numbered record: context, options, decision, consequences. Known ADRs already: *ADR-001 GarminDB over Strava as primary source*, *ADR-002 Metrics computed deterministically, not by the LLM*, *ADR-003 No ACWR / Foster monotony for heterogeneous training*, *ADR-004 Claude via Foundry rather than the Anthropic API*, *ADR-005 Table-per-type for activity detail*, *ADR-006 Google Calendar as a one-way sink*, *ADR-007 Rolling window instead of persisted collector state*.
 - **XML doc comments on every public member.** For anything in the metrics engine, the comment must state the formula and cite its source (e.g. Epley 1985; Schoenfeld et al. on weekly hard sets; Banister TRIMP; Coggan on aerobic decoupling). If a number can't be traced to a source, it doesn't belong in the engine.
 - **Inline comments at genuinely non-obvious logic** — FIT quirks, deduplication rules, timezone handling, HR-dropout compensation. Not on `i++`.
 - **Prompt files are documented artifacts**, versioned in the repo with the reasoning behind them. Prompts are code.
@@ -516,11 +591,11 @@ Scoring: partly programmatic (does the plan have property X), partly LLM-as-judg
 ### Testing
 - Metrics engine: 100 % coverage, with fixture-based tests from real FIT files.
 - Ingest: golden-file tests (FIT in, expected entities out).
-- Agent: the eval harness in §12.
+- Agent: the eval harness in §13.
 
 ---
 
-## 14. Open questions
+## 15. Open questions
 
 1. **Sample retention:** keep per-second samples in SQL indefinitely, or roll them to Blob after N months? Deferred until it hurts.
 2. **Strength exercise vocabulary:** the FIT SDK's exercise enum vs. a custom taxonomy. Affects muscle-group attribution.

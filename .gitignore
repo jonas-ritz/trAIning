@@ -77,3 +77,6 @@ desktop.ini
 ## Logs
 *.log
 logs/
+
+## Local scratch / experimentation (never committed, e.g. Phase 0 GarminDB recon)
+scratch/
