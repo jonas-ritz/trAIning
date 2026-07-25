@@ -43,3 +43,32 @@ These are **requirements on other code**, not side notes:
 - *Optional later:* check blob existence before uploading and skip unchanged files. Saves triggers.
   Not required for correctness — the idempotency above already guarantees that.
 - Widening the backfill window after a long outage is a config change, not a code change.
+
+---
+
+## Correction (2026-07, after Phase 0)
+
+The decision above stands unchanged — stateless, rolling, self-healing. Only the *implementation*
+turned out to be split, which the original text obscured by calling it simply a "7-day window".
+
+GarminDB does not steer all data types the same way:
+
+- **Wellness** (sleep, resting HR, stress, monitoring) is date-driven. The config takes real start
+  dates, so "today minus 7 days" is literal:
+  ```json
+  "sleep_start_date": "...", "rhr_start_date": "...", "monitoring_start_date": "..."
+  ```
+- **Activities** are *count*-driven, not date-driven. There is no activity start-date field. The
+  config takes a number:
+  ```json
+  "download_latest_activities": 25
+  ```
+  `--latest` for activities means "the last N", not "since date X".
+
+**Implementation of the rolling window is therefore two-part:** set the wellness start dates to
+today minus 7 days, and set `download_latest_activities` to a count that comfortably exceeds 7 days
+of training. At the current training frequency, 20–25 is safe. A fixed generous count is preferred
+over dynamically computing one — that would be over-engineering for a single user.
+
+The self-healing property is preserved on both sides: a wider date range and a larger count both
+just re-fetch more, and dedup absorbs the overlap.
