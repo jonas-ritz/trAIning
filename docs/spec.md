@@ -8,7 +8,7 @@
 
 ## 1. What this is
 
-A personal training coach that plans on its own, and listens when you have something to say.
+A personal training coach that plans on its own by reading your activites and health data but also listens when you have something to say.
 
 The system continuously ingests everything recorded by a Garmin watch — gym sessions, runs, rides, padel, football, circuits — measures what actually happened, and lets an AI agent turn that into a training plan. **This works without any input from you.** If you never write a single message, the app still ingests, measures, interprets, plans, and fills your calendar.
 
@@ -16,12 +16,13 @@ Chat is an optional steering layer on top of an otherwise autonomous system. Whe
 
 It plans on four inputs:
 
-1. **Training history** — what you actually did, measured from the raw device data
-2. **Conversation** *(optional)* — what you tell it, if you tell it anything ("legs are wrecked", "only Tuesday and Thursday this week", "no motivation for running right now")
+1. **Training history** — what you actually did, measured from the raw device data - automatically fed into the system through connection with garmin
+2. **Athelte profile** — weight, height, background information such as injuries and other required or helpful context
 3. **Goals** — what you're training for (build muscle, get faster, stay healthy), with priorities
-4. **Nutrition** *(optional)* — loosely tracked, mentioned in chat, factored in when relevant
+5. **Conversation** *(optional)* — what you tell it, if you tell it anything ("legs are wrecked", "only Tuesday and Thursday this week", "no motivation for running right now",
+"eating bad atm", "bellyache") so anything that is on your mind and not covered by the other inputs. Can also contain information on nutrition
 
-It explains its reasoning, answers questions about your training, and writes the planned sessions straight into your calendar.
+In the chat, it can explain itself and answers questions about your training - like a PA does. In the background it writes the planned sessions straight into your calendar dynamically.
 
 ### Delivery: a PWA
 
@@ -30,6 +31,8 @@ The client is a Progressive Web App — a web app that installs to the iPhone ho
 Practical consequence: gym logging works without signal in the basement, and the agent can reach the lock screen. The iOS constraints this imposes are in §10 and are design requirements, not surprises.
 
 ### Learning objectives (the actual purpose of this project)
+
+This project does not only lead to a helpful product, it also supports me in my learning process.
 
 | Gap | Closed by |
 |---|---|
@@ -44,7 +47,7 @@ Practical consequence: gym logging works without signal in the basement, and the
 ## 2. Core principles (non-negotiable)
 
 **1. The LLM interprets and builds. Deterministic code measures.**
-The metrics engine measures — from raw device data, with formulas that are documented, tested, and reproducible. The LLM interprets those measurements and builds plans from them. It never computes a number it could be given instead.
+The metrics engine measures — from raw device data, with formulas that are documented, tested, and reproducible. The LLM interprets those measurements and builds plans from them and other input. It never computes a number it could be given instead.
 
 **2. Data sources are replaceable and isolated.**
 The Garmin collector is an unofficial, fragile fetcher. It runs in its own container, delivers only raw files, and knows nothing about the domain model. If it breaks, the system keeps running on the data it already has.
