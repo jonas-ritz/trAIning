@@ -76,7 +76,7 @@ A Python tool (GPL-2.0) that authenticates against Garmin Connect via SSO and re
 
 ```
 Garmin Collector (Python container, nightly cron job)
-  │  1. garmindb_cli.py --all --download   (rolling 7-day window)
+  │  1. garmindb_cli.py --all --download   (rolling window)
   │  2. upload raw files → Blob Storage    (deterministic names)
   ▼
 Azure Blob Storage  ── raw FIT + wellness JSON
