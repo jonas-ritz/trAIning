@@ -1,4 +1,4 @@
-# Training Coach
+# TrAIning
 
 > **Status: planning phase.** No application code exists yet — this repo currently holds the
 > spec and working conventions only. See [Status](#status) below.

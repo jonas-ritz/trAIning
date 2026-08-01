@@ -1,4 +1,4 @@
-# Training Coach
+# TrAIning
 
 An AI training coach that plans autonomously from Garmin data and adapts when I talk to it.
 Delivered as a Blazor PWA on Azure. This is a learning project: the point is that **I understand

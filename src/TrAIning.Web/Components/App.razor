@@ -8,6 +8,13 @@
     <ResourcePreloader />
     <link rel="stylesheet" href="@Assets["app.css"]" />
     <link rel="stylesheet" href="@Assets["TrAIning.Web.styles.css"]" />
+    <link rel="manifest" href="manifest.json" />
+    <meta name="theme-color" content="#0F172A" />
+    <!-- iOS ignores manifest.json entirely for home-screen install; these tags are what Safari reads instead. -->
+    <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TrAIning" />
     <ImportMap />
     <HeadOutlet />
 </head>
@@ -16,6 +23,11 @@
     <Routes />
     <ReconnectModal />
     <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script>
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("service-worker.js");
+        }
+    </script>
 </body>
 
 </html>
