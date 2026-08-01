@@ -41,7 +41,7 @@ cover local run instructions:
 ```bash
 dotnet build
 dotnet test
-dotnet run --project src/TrainingCoach.Web
+dotnet run --project src/TrAIning.Web
 ```
 
 ## How to deploy
@@ -70,13 +70,13 @@ See [docs/spec.md §4](docs/spec.md#4-architecture) for the full diagram and rat
 
 ```
 src/
-  TrainingCoach.Web/            Blazor PWA + API
-  TrainingCoach.Domain/         Entities, domain logic
-  TrainingCoach.Ingest/         IActivitySource, FIT parsing, dedup
-  TrainingCoach.Metrics/        Metrics engine (documented, 100% tested)
-  TrainingCoach.Interpretation/ LLM session interpretation
-  TrainingCoach.Agent/          Tool loop, tool definitions, prompts
-  TrainingCoach.Functions/      Azure Functions (blob trigger, timers)
+  TrAIning.Web/            Blazor PWA + API
+  TrAIning.Domain/         Entities, domain logic
+  TrAIning.Ingest/         IActivitySource, FIT parsing, dedup
+  TrAIning.Metrics/        Metrics engine (documented, 100% tested)
+  TrAIning.Interpretation/ LLM session interpretation
+  TrAIning.Agent/          Tool loop, tool definitions, prompts
+  TrAIning.Functions/      Azure Functions (blob trigger, timers)
   garmin-collector/             Python container (GarminDB, isolated)
 infra/                          Bicep
 tests/

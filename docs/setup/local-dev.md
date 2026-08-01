@@ -4,7 +4,7 @@
 
 Will cover:
 - .NET 10 SDK install and version check
-- Running the Blazor app locally (`dotnet run --project src/TrainingCoach.Web`)
+- Running the Blazor app locally (`dotnet run --project src/TrAIning.Web`)
 - Local secrets (user-secrets / a local `.env`) — **never** the global shell environment, so that
   `ANTHROPIC_API_KEY` doesn't leak in and silently switch Claude Code to token billing
 - Local Azure SQL alternative for dev (SQL Server container / SQLite) if used

@@ -34,7 +34,7 @@ One isolated Python container (GarminDB). **Everything else is C#.**
 ```bash
 dotnet build
 dotnet test
-dotnet run --project src/TrainingCoach.Web
+dotnet run --project src/TrAIning.Web
 az deployment group create -g <rg> -f infra/main.bicep
 ```
 
