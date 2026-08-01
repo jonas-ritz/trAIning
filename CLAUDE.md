@@ -5,7 +5,7 @@ Delivered as a Blazor PWA on Azure. This is a learning project: the point is tha
 the cloud, the agent, and the architecture** — not that code appears quickly.
 
 **What the system is → @docs/spec.md** (architecture, data model, agent design, runtime flow, phases)
-**Why it is that way → `docs/adr/`** (ten decisions, with the options that were rejected)
+**Why it is that way → `docs/adr/`** (eleven decisions, with the options that were rejected)
 
 Read the spec before proposing anything structural. If you're about to argue for a different
 approach, check the ADRs first — it may already have been considered and rejected for a reason.
@@ -15,8 +15,9 @@ If it hasn't, say so and propose a new ADR.
 
 ## Status
 
-> **Current phase: 0 — reconnaissance.** No production code yet.
-> Next milestone: confirm FIT files contain `set` messages, then build the walking skeleton.
+> **Current phase: 1 — walking skeleton, in progress.** Done: empty Blazor Web App, PWA
+> installability. Next: containerize, then Bicep infra, then CI/CD. See docs/spec.md §12 for the
+> full phase plan.
 
 *(Keep this block current. It's the first thing that tells you what "helpful" means right now.)*
 

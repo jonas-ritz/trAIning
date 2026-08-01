@@ -1,7 +1,7 @@
 # TrAIning
 
-> **Status: planning phase.** No application code exists yet — this repo currently holds the
-> spec and working conventions only. See [Status](#status) below.
+> **Status: Phase 1 (walking skeleton), in progress.** An empty, PWA-installable Blazor Web App
+> builds and runs locally; it doesn't deploy itself yet. See [Status](#status) below.
 
 A personal training coach that plans on its own and listens when you have something to say.
 
@@ -19,9 +19,10 @@ Working conventions for this repo: [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
-Early planning stage — no application code yet. See [docs/spec.md §11](docs/spec.md#11-phases)
-for the phased build-out plan, starting with Phase 0 (reconnaissance) and Phase 1 (walking
-skeleton).
+Phase 1 (walking skeleton) is in progress: the Blazor Web App scaffold exists, builds, and is
+installable as a PWA. Containerization, Azure infra (Bicep), and CI/CD are still ahead — once
+those land, the app deploys itself on every push. See [docs/spec.md §12](docs/spec.md#12-phases)
+for the full phased build-out plan.
 
 ## Stack
 
@@ -34,9 +35,6 @@ skeleton).
 - Bicep for IaC, GitHub Actions for CI/CD
 
 ## How to run
-
-No runnable application yet. Once the walking skeleton (Phase 1) lands, this section will
-cover local run instructions:
 
 ```bash
 dotnet build
@@ -70,19 +68,19 @@ See [docs/spec.md §4](docs/spec.md#4-architecture) for the full diagram and rat
 
 ```
 src/
-  TrAIning.Web/            Blazor PWA + API
-  TrAIning.Domain/         Entities, domain logic
-  TrAIning.Ingest/         IActivitySource, FIT parsing, dedup
-  TrAIning.Metrics/        Metrics engine (documented, 100% tested)
-  TrAIning.Interpretation/ LLM session interpretation
-  TrAIning.Agent/          Tool loop, tool definitions, prompts
-  TrAIning.Functions/      Azure Functions (blob trigger, timers)
-  garmin-collector/             Python container (GarminDB, isolated)
-infra/                          Bicep
-tests/
+  TrAIning.Web/            Blazor PWA + API                          ← exists
+  TrAIning.Domain/         Entities, domain logic                    (planned)
+  TrAIning.Ingest/         IActivitySource, FIT parsing, dedup       (planned)
+  TrAIning.Metrics/        Metrics engine (documented, 100% tested)  (planned)
+  TrAIning.Interpretation/ LLM session interpretation                (planned)
+  TrAIning.Agent/          Tool loop, tool definitions, prompts      (planned)
+  TrAIning.Functions/      Azure Functions (blob trigger, timers)    (planned)
+  garmin-collector/             Python container (GarminDB, isolated) (planned)
+infra/                          Bicep                                 (planned)
+tests/                                                                 (planned)
 docs/
   spec.md
   adr/
 ```
 
-(Directories above are planned; not all exist yet — see Status.)
+(Only `src/TrAIning.Web/` exists so far — see Status.)
