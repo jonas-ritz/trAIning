@@ -1,7 +1,7 @@
 # Build from the repo root: docker build -f src/TrAIning.Web/Dockerfile -t training-web .
 # (paths below are relative to that build context, not this file's folder)
 
-# ---- Build stage: SDK image has the compiler, not needed at runtime ----
+# ---- Build stage: Use SDK image with the compiler ----
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
@@ -18,13 +18,15 @@ WORKDIR /src
 # edit would cause the restore to run completely again because the command before could not be taken 
 # out of the cache, forcing a full re-restore on every build regardless of whether dependencies 
 # actually changed.
+
+# Copy the sources, load the dependencies
 COPY ["src/TrAIning.Web/TrAIning.Web.csproj", "src/TrAIning.Web/"]
 RUN dotnet restore "src/TrAIning.Web/TrAIning.Web.csproj"
-
 COPY src/TrAIning.Web/ src/TrAIning.Web/
+# Build the project and publish the output to /app/publish
 RUN dotnet publish "src/TrAIning.Web/TrAIning.Web.csproj" -c Release -o /app/publish --no-restore
 
-# ---- Runtime stage: ASP.NET runtime only, much smaller than the SDK image ----
+# ---- Runtime stage: ASP.NET runtime only, much smaller than the SDK image and used for deployment ----
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 
@@ -33,6 +35,8 @@ WORKDIR /app
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 
+# Copy from the build stage to the runtime stage what has been published
 COPY --from=build /app/publish .
 
+# run the app
 ENTRYPOINT ["dotnet", "TrAIning.Web.dll"]

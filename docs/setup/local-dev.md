@@ -33,9 +33,10 @@ docker run -p 8080:8080 training-web:local
 ```
 
 Open <http://localhost:8080>. Unlike `dotnet run`, this serves plain HTTP on a fixed port — the
-container never terminates TLS itself; that's Azure Container Apps' ingress's job once deployed
-(see the Dockerfile's comments). A few log warnings only show up this way, never during local
-`dotnet run`, and are expected:
+container never terminates TLS itself; that's Azure Container Apps' ingress's job once deployed.
+See [tls-termination.md](../reference/tls-termination.md) for the full flow (with a diagram) of
+why that split exists and how the app still knows a request was originally HTTPS. A few log
+warnings only show up running this way, never during local `dotnet run`, and are expected:
 - `Failed to determine the https port for redirect` — only when hitting the container directly
   with no reverse proxy in front of it (i.e. exactly what you're doing here). In the real
   deployment, Container Apps' ingress adds an `X-Forwarded-Proto` header that tells the app the
