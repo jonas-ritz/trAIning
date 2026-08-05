@@ -1,0 +1,22 @@
+# Same idea as .gitignore, but for `docker build`: this defines what never gets sent to the
+# Docker daemon as the build context in the first place (everything under the path you pass to
+# `docker build`, e.g. the repo root here — before it even reads the Dockerfile). Anything listed
+# here is invisible to every COPY instruction, no matter what it asks for. That's what keeps the
+# build context small and stops locally-built (host-platform) binaries from accidentally getting
+# copied into the image instead of being rebuilt inside it.
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+
+.git/
+.gitignore
+.dockerignore
+.editorconfig
+*.slnx
+
+docs/
+tools/
+README.md
+CLAUDE.md
+LICENSE.md
