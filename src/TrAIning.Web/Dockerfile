@@ -32,6 +32,7 @@ WORKDIR /app
 
 # Azure Container Apps' ingress terminates TLS and forwards plain HTTP to the container, so
 # Kestrel only needs to listen on one HTTP port here.
+# More on that can be found in docs/tls-termination.md
 ENV ASPNETCORE_HTTP_PORTS=8080
 EXPOSE 8080
 
