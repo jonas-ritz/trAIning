@@ -13,6 +13,9 @@ param location string = resourceGroup().location
 @description('Base name used to derive individual resource names.')
 param baseName string = 'training'
 
+@description('Full image reference for the Container App, e.g. ghcr.io/jonas-ritz/training-web:<tag>.')
+param webImage string
+
 // Log Analytics workspace: where every container's logs end up.
 module logAnalytics 'modules/log-analytics.bicep' = {
   name: 'log-analytics'
@@ -34,5 +37,17 @@ module containerAppsEnvironment 'modules/container-apps-environment.bicep' = {
   }
 }
 
+// The Container App: TrAIning.Web itself, running inside the environment above.
+module containerApp 'modules/container-app.bicep' = {
+  name: 'container-app'
+  params: {
+    name: 'ca-${baseName}-web'
+    location: location
+    containerAppsEnvironmentId: containerAppsEnvironment.outputs.id
+    image: webImage
+  }
+}
+
 output containerAppsEnvironmentId string = containerAppsEnvironment.outputs.id
 output containerAppsEnvironmentDefaultDomain string = containerAppsEnvironment.outputs.defaultDomain
+output webFqdn string = containerApp.outputs.fqdn
