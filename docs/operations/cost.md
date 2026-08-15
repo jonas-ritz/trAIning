@@ -56,8 +56,9 @@ conversation, not with training.** A quiet week is cheap; a chatty week costs mo
 - Billed **per token** on the Azure invoice (no separate Anthropic account, no API key).
 - A Claude **Pro subscription cannot offset this** — Pro is the consumer chat product and has no API
   path. Application traffic is always per-token. (See ADR-0004.)
-- Requires a **pay-as-you-go** subscription (ADR-0012). Trial/credit subscriptions can't run Foundry
-  at all, so there's no "free LLM" path here.
+- Requires a **pay-as-you-go** subscription — see
+  [azure-subscription.md](../setup/azure-subscription.md). Trial/credit subscriptions can't run
+  Foundry at all, so there's no "free LLM" path here.
 
 ## Where to see actual spend
 

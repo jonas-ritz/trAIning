@@ -10,4 +10,4 @@ Planned entries:
 - **No new activities for N days** — is it the collector, the upload, or the ingest function?
 - **Interpretation cost spiked** — check the idempotency guard and `AgentRun` logs (see cost.md).
 - **Agent replanning loop** — how to detect and stop it.
-- **Restoring after a trial subscription lapsed** (ADR-0012).
+- **Restoring after a trial subscription lapsed** — see azure-subscription.md.

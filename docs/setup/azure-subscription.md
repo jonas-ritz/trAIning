@@ -1,7 +1,6 @@
 # Azure subscription setup
 
 Practical steps for creating and checking the Azure subscription this project deploys into.
-For *why* the timing is what it is, see [ADR-0012](../adr/0012-payg-subscription.md).
 
 ## The one rule that matters
 
