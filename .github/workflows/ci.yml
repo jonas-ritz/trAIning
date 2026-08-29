@@ -6,9 +6,8 @@ on:
   push:
     branches: [main]   # runs only on pushes to main — not other branches, not pull requests
 
-# GITHUB_TOKEN is minted fresh per workflow run and expires when it ends — no PAT to create,
-# rotate, or leak, unlike the manual push we did by hand. It defaults to read-only in some
-# org/repo settings, so packages: write has to be requested explicitly here.
+# GITHUB_TOKEN is minted fresh per workflow run and expires when it ends. It is configured here 
+# explicitly and we need it for access to the GHCR.
 permissions:
   contents: read    # lets the job check out the repo's code
   packages: write   # lets the job push images to GHCR
