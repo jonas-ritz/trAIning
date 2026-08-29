@@ -1,0 +1,40 @@
+name: CI   # display name shown in the GitHub Actions UI
+
+# Builds the Docker image and pushes it to GHCR on every push to main. Only builds and pushes —
+# nothing here tells Azure to run the new image; that's a separate workflow.
+on:
+  push:
+    branches: [main]   # runs only on pushes to main — not other branches, not pull requests
+
+# GITHUB_TOKEN is minted fresh per workflow run and expires when it ends — no PAT to create,
+# rotate, or leak, unlike the manual push we did by hand. It defaults to read-only in some
+# org/repo settings, so packages: write has to be requested explicitly here.
+permissions:
+  contents: read    # lets the job check out the repo's code
+  packages: write   # lets the job push images to GHCR
+
+jobs:
+  build-and-push:            # job ID — an internal name, not shown as prominently as the step names
+    runs-on: ubuntu-latest    # which runner OS/image GitHub provisions to execute the steps below
+    steps:
+      - uses: actions/checkout@v4   # downloads this repo's code onto the runner (nothing exists there otherwise)
+
+      - uses: docker/setup-buildx-action@v3   # sets up Buildx, the build engine build-push-action needs
+
+      - uses: docker/login-action@v3   # authenticates the runner's Docker CLI against a registry
+        with:
+          registry: ghcr.io                     # which registry to log in to
+          username: ${{ github.actor }}         # who/what triggered this run
+          password: ${{ secrets.GITHUB_TOKEN }} # this run's auto-issued, short-lived credential
+
+      # Matches the manual tagging convention from docs/setup/deploy.md, so images built here
+      # and images built by hand are never ambiguous about which commit they came from.
+      - id: sha   # names this step "sha" so later steps can reference its output
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"   # computes the short commit SHA, exposes it as an output
+
+      - uses: docker/build-push-action@v6   # builds the image and pushes it, in one step
+        with:
+          context: .                          # build context = repo root (must match the Dockerfile's COPY paths)
+          file: src/TrAIning.Web/Dockerfile    # which Dockerfile to build
+          push: true                          # actually push the result, not just build it locally
+          tags: ghcr.io/${{ github.repository_owner }}/training-web:${{ steps.sha.outputs.short }}   # image name:tag to push as
