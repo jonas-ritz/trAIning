@@ -19,9 +19,17 @@ and drift risk for no benefit. See spec.md §12 for the phase they're each intro
 
 ## How the image actually gets from your machine to Azure
 
-Bicep never touches the image itself — `az deployment group create` only tells the Container App
-resource *which image tag to run*. The image has to already exist somewhere Azure can reach
-before that command can succeed:
+The image is not "a container that the app gets installed into later" — by the time it's built,
+it's already a fully self-contained, ready-to-run bundle. The Dockerfile's build stage compiles
+`TrAIning.Web` (`dotnet publish`); the runtime stage copies *only that compiled output* — the
+ASP.NET runtime, `TrAIning.Web.dll`, its dependencies, `wwwroot/` — into a fresh image with no
+compiler and no source code. Nothing gets compiled, fetched, or assembled anywhere else,
+afterwards, ever: the exact same bits that ran via `docker run` on your machine are what sits in
+GHCR, and what Azure runs. Azure never builds anything — it only ever runs a pre-built image.
+
+Bicep never touches the image itself either — `az deployment group create` only tells the
+Container App resource *which image tag to run*. The image has to already exist somewhere Azure
+can reach before that command can succeed:
 
 ```mermaid
 flowchart LR
