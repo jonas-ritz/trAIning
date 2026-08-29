@@ -1,20 +1,25 @@
-name: CI   # display name shown in the GitHub Actions UI
+name: CI/CD   # display name shown in the GitHub Actions UI
 
-# Builds the Docker image and pushes it to GHCR on every push to main. Only builds and pushes —
-# nothing here tells Azure to run the new image; that's a separate workflow.
+# Builds the Docker image, pushes it to GHCR, then deploys it to Azure Container Apps — all on
+# every push to main. Two jobs in one workflow (rather than two separate workflow files) so
+# "deploy" always runs against the exact image "build-and-push" just produced, with no separate
+# lookup or ambiguity about which build a given deploy corresponds to.
 on:
   push:
     branches: [main]   # runs only on pushes to main — not other branches, not pull requests
 
-# GITHUB_TOKEN is minted fresh per workflow run and expires when it ends. It is configured here 
-# explicitly and we need it for access to the GHCR.
+# GITHUB_TOKEN is minted fresh per workflow run and expires when it ends. id-token: write is what
+# lets the deploy job request an OIDC token for Azure login (ADR-0012) — unrelated to GHCR.
 permissions:
-  contents: read    # lets the job check out the repo's code
-  packages: write   # lets the job push images to GHCR
+  contents: read    # lets jobs check out the repo's code
+  packages: write   # lets the build job push images to GHCR
+  id-token: write   # lets the deploy job request an OIDC token from GitHub, for Azure login
 
 jobs:
   build-and-push:            # job ID — an internal name, not shown as prominently as the step names
     runs-on: ubuntu-latest    # which runner OS/image GitHub provisions to execute the steps below
+    outputs:
+      sha: ${{ steps.sha.outputs.short }}   # exposes the tag so the deploy job below can reuse it
     steps:
       - uses: actions/checkout@v4   # downloads this repo's code onto the runner (nothing exists there otherwise)
 
@@ -28,7 +33,7 @@ jobs:
 
       # Matches the manual tagging convention from docs/setup/deploy.md, so images built here
       # and images built by hand are never ambiguous about which commit they came from.
-      - id: sha   # names this step "sha" so later steps can reference its output
+      - id: sha   # names this step "sha" so later steps (and the deploy job) can reference its output
         run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"   # computes the short commit SHA, exposes it as an output
 
       - uses: docker/build-push-action@v6   # builds the image and pushes it, in one step
@@ -37,3 +42,19 @@ jobs:
           file: src/TrAIning.Web/Dockerfile    # which Dockerfile to build
           push: true                          # actually push the result, not just build it locally
           tags: ghcr.io/${{ github.repository_owner }}/training-web:${{ steps.sha.outputs.short }}   # image name:tag to push as
+
+  deploy:
+    needs: build-and-push    # only starts once build-and-push succeeds; can read its outputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: azure/login@v2   # exchanges this run's GitHub OIDC token for an Azure login — no stored secret (ADR-0012)
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}             # the app registration's client ID (not secret — just an identifier)
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}              # which Entra tenant to authenticate against
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }} # which Azure subscription to operate in
+
+      - run: |    # points the existing Container App at the image build-and-push just pushed
+          az containerapp update \
+            --resource-group rg-training \
+            --name ca-training-web \
+            --image ghcr.io/${{ github.repository_owner }}/training-web:${{ needs.build-and-push.outputs.sha }}

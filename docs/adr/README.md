@@ -20,5 +20,6 @@ reverse-engineer *why* something is the way it is.
 | [0009](0009-plan-first-chat-optional.md) | Plan-first, chat optional | Accepted |
 | [0010](0010-pwa-not-native.md) | PWA instead of a native iOS app | Accepted |
 | [0011](0011-manual-weight-entry.md) | Strength weight entered by the user, not read from the device | Accepted |
+| [0012](0012-github-actions-oidc-auth.md) | GitHub Actions authenticates to Azure via OIDC, not a stored secret | Accepted |
 
 Template: [template.md](template.md)

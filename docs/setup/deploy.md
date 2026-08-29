@@ -1,8 +1,10 @@
 # Deploy
 
-How the Azure infrastructure gets created and updated. For now this is a manual, one-time
-bootstrap (Bicep from your own machine); a GitHub Actions workflow will later automate the
-update path, but the first-time setup below stays manual either way.
+How the Azure infrastructure gets created and updated. The first-time bootstrap (creating the
+resource group, the Log Analytics workspace, the Container Apps Environment) is manual, one-time,
+from your own machine — everything below that. Once that foundation exists, `.github/workflows/ci.yml`
+builds, pushes, and deploys automatically on every push to `main`; the manual build/push/deploy
+steps below are still worth knowing for local testing or if the automation itself needs debugging.
 
 ## What's in `infra/` today, and what isn't
 
@@ -131,6 +133,14 @@ curl -I "https://$(az deployment group show -g rg-training -n main --query prope
 ```
 
 Should return `200`.
+
+## Automated deploy (CI/CD)
+
+Once the infrastructure above exists, `.github/workflows/ci.yml` builds, pushes, and deploys
+automatically on every push to `main` — no manual steps from here on. It authenticates to Azure
+via an OIDC federated credential rather than a stored secret (ADR-0012); setting that trust
+relationship up is a separate one-time step, not part of a normal deploy — see
+[github-actions-oidc.md](github-actions-oidc.md).
 
 ## A note on secrets in this template
 

@@ -5,7 +5,7 @@ Delivered as a Blazor PWA on Azure. This is a learning project: the point is tha
 the cloud, the agent, and the architecture** — not that code appears quickly.
 
 **What the system is → @docs/spec.md** (architecture, data model, agent design, runtime flow, phases)
-**Why it is that way → `docs/adr/`** (eleven decisions, with the options that were rejected)
+**Why it is that way → `docs/adr/`** (twelve decisions, with the options that were rejected)
 
 Read the spec before proposing anything structural. If you're about to argue for a different
 approach, check the ADRs first — it may already have been considered and rejected for a reason.
