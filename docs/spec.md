@@ -496,8 +496,8 @@ Behind `ICalendarSink` — an external boundary, which is exactly where dependen
 - Parse one FIT file with the FIT SDK for .NET — confirm you can read records, laps, and sets
 - Check the Azure subscription is pay-as-you-go (Foundry prerequisite)
 
-### Phase 1 – Weeks 1–2: Walking skeleton
-Empty Blazor PWA, installable on iOS. Docker. Bicep (resource group, Log Analytics, Container Apps Environment, Azure SQL, Blob, Key Vault). GitHub Actions.
+### Phase 1 – Weeks 1–2: Walking skeleton ✅ complete
+Empty Blazor PWA, installable on iOS. Docker. Bicep (resource group, Log Analytics, Container Apps Environment). GitHub Actions. Azure SQL, Blob, and Key Vault moved to Phase 2 — nothing in Phase 1 reads or writes to them, so provisioning them here would only add cost and drift risk with no benefit.
 **Milestone: the app is live at a URL and deploys itself on git push.** Nothing works yet. That's fine — this is the step the whole project exists for.
 
 ### Phase 2 – Weeks 3–4: Ingest

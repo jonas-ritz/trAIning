@@ -1,7 +1,7 @@
 # TrAIning
 
-> **Status: Phase 1 (walking skeleton), in progress.** An empty, PWA-installable Blazor Web App
-> builds and runs locally; it doesn't deploy itself yet. See [Status](#status) below.
+> **Status: Phase 1 (walking skeleton) complete.** An empty, PWA-installable Blazor Web App
+> builds, runs, and deploys itself to Azure on every push to `main`. See [Status](#status) below.
 
 A personal training coach that plans on its own and listens when you have something to say.
 
@@ -19,10 +19,10 @@ Working conventions for this repo: [CLAUDE.md](CLAUDE.md).
 
 ## Status
 
-Phase 1 (walking skeleton) is in progress: the Blazor Web App scaffold exists, builds, and is
-installable as a PWA. Containerization, Azure infra (Bicep), and CI/CD are still ahead — once
-those land, the app deploys itself on every push. See [docs/spec.md §12](docs/spec.md#12-phases)
-for the full phased build-out plan.
+Phase 1 (walking skeleton) is complete: the Blazor Web App is PWA-installable, containerized,
+provisioned on Azure via Bicep, and deploys itself via GitHub Actions on every push to `main`.
+Next: Phase 2 (ingest). See [docs/spec.md §12](docs/spec.md#12-phases) for the full phased
+build-out plan.
 
 ## Stack
 
@@ -44,11 +44,9 @@ dotnet run --project src/TrAIning.Web
 
 ## How to deploy
 
-Deployment is via Bicep + GitHub Actions once infrastructure exists:
-
-```bash
-az deployment group create -g <resource-group> -f infra/main.bicep
-```
+Automatic: every push to `main` builds, pushes, and deploys via GitHub Actions
+(`.github/workflows/ci.yml`). See [docs/setup/deploy.md](docs/setup/deploy.md) for the mechanics,
+one-time setup, and manual fallback commands.
 
 ## Architecture at a glance
 
@@ -76,11 +74,12 @@ src/
   TrAIning.Agent/          Tool loop, tool definitions, prompts      (planned)
   TrAIning.Functions/      Azure Functions (blob trigger, timers)    (planned)
   garmin-collector/             Python container (GarminDB, isolated) (planned)
-infra/                          Bicep                                 (planned)
+infra/                          Bicep                                 ← exists
+.github/workflows/              CI/CD                                 ← exists
 tests/                                                                 (planned)
 docs/
   spec.md
   adr/
 ```
 
-(Only `src/TrAIning.Web/` exists so far — see Status.)
+(`src/TrAIning.Web/`, `infra/`, and `.github/` exist so far — see Status.)

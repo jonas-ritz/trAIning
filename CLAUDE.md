@@ -15,9 +15,9 @@ If it hasn't, say so and propose a new ADR.
 
 ## Status
 
-> **Current phase: 1 — walking skeleton, in progress.** Done: empty Blazor Web App, PWA
-> installability. Next: containerize, then Bicep infra, then CI/CD. See docs/spec.md §12 for the
-> full phase plan.
+> **Current phase: 1 — walking skeleton, complete.** The app builds, is PWA-installable,
+> containerized, provisioned via Bicep, and deploys itself on every push to `main`. Next: Phase 2
+> (ingest). See docs/spec.md §12 for the full phase plan.
 
 *(Keep this block current. It's the first thing that tells you what "helpful" means right now.)*
 
