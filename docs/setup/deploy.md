@@ -1,153 +1,81 @@
 # Deploy
 
-How the Azure infrastructure gets created and updated. The first-time bootstrap (creating the
-resource group, the Log Analytics workspace, the Container Apps Environment) is manual, one-time,
-from your own machine — everything below that. Once that foundation exists, `.github/workflows/ci.yml`
-builds, pushes, and deploys automatically on every push to `main`; the manual build/push/deploy
-steps below are still worth knowing for local testing or if the automation itself needs debugging.
-
-## What's in `infra/` today, and what isn't
-
-`infra/main.bicep` defines:
-
-- A Log Analytics workspace (`log-training`) — where every container's logs end up.
-- A Container Apps Environment (`cae-training`) — the shared host that Container Apps and
-  Container App Jobs run inside.
-- A Container App (`ca-training-web`) — runs `TrAIning.Web`, pulling a pre-built image from GHCR.
-
-**Not here, deliberately:** Azure SQL / Blob Storage / Key Vault. Nothing in the codebase reads
-or writes to them yet — provisioning them earlier than the code that needs them just adds cost
-and drift risk for no benefit. See spec.md §12 for the phase they're each introduced in.
-
-## How the image actually gets from your machine to Azure
-
-The image is not "a container that the app gets installed into later" — by the time it's built,
-it's already a fully self-contained, ready-to-run bundle. The Dockerfile's build stage compiles
-`TrAIning.Web` (`dotnet publish`); the runtime stage copies *only that compiled output* — the
-ASP.NET runtime, `TrAIning.Web.dll`, its dependencies, `wwwroot/` — into a fresh image with no
-compiler and no source code. Nothing gets compiled, fetched, or assembled anywhere else,
-afterwards, ever: the exact same bits that ran via `docker run` on your machine are what sits in
-GHCR, and what Azure runs. Azure never builds anything — it only ever runs a pre-built image.
-
-Bicep never touches the image itself either — `az deployment group create` only tells the
-Container App resource *which image tag to run*. The image has to already exist somewhere Azure
-can reach before that command can succeed:
+TrAIning.Web deploys itself. `.github/workflows/ci.yml` triggers automatically on every push to
+`main` (`on: push: branches: [main]`) and runs two jobs, in order:
 
 ```mermaid
 flowchart LR
-    subgraph local["Your machine (manual today — GitHub Actions later)"]
-        direction TB
-        build["docker build<br/>compiles the Dockerfile"] --> push["docker push<br/>uploads the image"]
-        deploy["az deployment group create<br/>(Bicep)"]
-    end
-
-    push -->|"stored as<br/>ghcr.io/jonas-ritz/training-web:tag"| ghcr[("GHCR")]
-    deploy -->|"tells Azure which<br/>tag to run"| ca["Container App<br/>resource"]
-    ghcr -->|"Azure pulls the image itself —<br/>never sent from your machine"| ca
-    ca --> run["Container runs inside the<br/>Container Apps Environment"]
+    push["push to main"] --> build["GitHub Actions runner<br/>builds src/TrAIning.Web/Dockerfile"]
+    build -->|"pushes, logged in<br/>via GITHUB_TOKEN"| ghcr[("GHCR<br/>ghcr.io/jonas-ritz/training-web")]
+    ghcr -->|"az containerapp update,<br/>runner logged in via OIDC"| ca["Container App resource<br/>(infra/modules/container-app.bicep)"]
+    ca -.->|"Azure pulls the tag<br/>on its own"| run["Container actually running"]
 ```
 
-Three separate things, easy to conflate into one "deploy" step:
+Who does what, concretely:
 
-1. **Build** — compiles the Dockerfile into an image, entirely local to whatever machine runs it.
-2. **Push** — uploads that image to GHCR, a storage location independent of both your machine and
-   Azure. This is the only step in this whole flow that needs a GitHub credential.
-3. **Deploy** — `az deployment group create` updates the Container App resource's `image`
-   property to point at a tag in GHCR. Azure's own infrastructure then pulls that image from GHCR
-   on its own, using the credentials/permissions configured earlier — nothing is transferred
-   *from* your machine *to* Azure directly. If step 2 hasn't happened yet, or the tag is wrong,
-   step 3 succeeds (the Bicep deployment itself is valid) but the Container App fails to start,
-   because Azure can't find the image it was told to pull.
+- **`build-and-push` job**: the runner — a temporary VM GitHub provisions for this one run —
+  builds the image from `src/TrAIning.Web/Dockerfile` (`docker/build-push-action`), then pushes it
+  itself to GHCR, tagged with the commit's short SHA. Logged in to GHCR as the workflow, via its
+  own short-lived `GITHUB_TOKEN` — no PAT. The package is public, so nothing downstream needs a
+  credential to pull it.
+- **`deploy` job**: the same kind of runner logs in to **Azure** via OIDC (ADR-0012) — no stored
+  secret, a federated credential trusts GitHub's token only for pushes to `main` on this exact
+  repo. It runs `az containerapp update --image ...`, which only edits the Container App resource
+  (`infra/modules/container-app.bicep`) to point at the new tag.
 
-## Prerequisites
+That last step is the one easy to misread: the runner does not hand the image to Azure. It only
+changes *which tag* the Container App resource references. Azure's own infrastructure then fetches
+that image from GHCR itself, independently, whenever it needs to start a replica — the runner
+never transfers the image bytes anywhere near Azure.
 
-1. **Azure CLI**, logged in: `az login` (or `az login --use-device-code` if the normal browser
-   flow doesn't work in your environment — it prints a URL and a short code to enter there).
-   Confirm you're on the right account/subscription afterwards: `az account show`.
-2. **A pay-as-you-go subscription isn't required yet** — everything deployed so far runs on
-   free-tier resources regardless of subscription type. See
-   [azure-subscription.md](azure-subscription.md) for when that changes (once Foundry is in use).
-3. **The resource group must already exist.** Bicep here is scoped to an existing resource group
-   on purpose (see `main.bicep`'s top comment) — creating it is a separate, explicit step:
-   ```bash
-   az group create --name rg-training --location <region>
-   ```
-   Pick a region Container Apps and (later) Foundry both support. **Not every region accepts new
-   resources on every subscription** — newer or free-tier subscriptions can get rejected in
-   high-demand regions with `RequestDisallowedByAzure ... currently not accepting new customers`.
-   If that happens, `az deployment group what-if` (below) with a different `location` override is
-   a fast way to check which regions your subscription actually has access to before committing.
+The two jobs are connected by an explicit dependency, not just file order: `deploy` declares
+`needs: build-and-push`, which does two things — it waits for that job to finish, and it lets
+`deploy` read `needs.build-and-push.outputs.sha`, the exact tag that job just pushed. Without that
+link, `deploy` would have no reliable way to know which tag is actually new.
 
-## Build and push the image
+## What's actually running
 
-4. **Log in to GHCR**, once: `docker login ghcr.io -u <your-github-username>`, password = a
-   Personal Access Token (classic) with the `write:packages` scope
-   (github.com → Settings → Developer settings → Personal access tokens → Tokens (classic)).
-5. **Build, tag, and push:**
-   ```bash
-   docker build -f src/TrAIning.Web/Dockerfile -t ghcr.io/jonas-ritz/training-web:<tag> .
-   docker push ghcr.io/jonas-ritz/training-web:<tag>
-   ```
-   `<tag>` can be anything unique — a git short SHA (`git rev-parse --short HEAD`) is a reasonable
-   default and matches what CI tags with later.
-6. **The GHCR package must be public** for Azure to pull it without any registry credentials
-   configured in Bicep — first push creates the package as private by default, so after the very
-   first push: github.com/jonas-ritz?tab=packages → the `training-web` package → Package settings
-   → Change visibility → Public. Only needed once; later pushes to the same package stay public.
+`infra/main.bicep`: a Log Analytics workspace (`log-training`), a Container Apps Environment
+(`cae-training`), and the Container App itself (`ca-training-web`, external ingress on port 8080,
+scale-to-zero — `infra/modules/container-app.bicep`). Not there yet, deliberately: Azure SQL /
+Blob / Key Vault — nothing reads or writes to them yet.
 
-## Deploy
+## One-time setup (already done; only needed again from scratch)
+
+- **Infra bootstrap** — create the resource group, then `az deployment group create -g rg-training
+  -f infra/main.bicep --parameters webImage=<any-existing-tag>`. Region matters: not every
+  subscription can create resources in every region (West Europe rejected this one); `az
+  deployment group what-if` with a different `--parameters location=` is the fast way to check.
+- **Making the GHCR package public** — the first push to a new GHCR package defaults to private.
+  github.com/jonas-ritz?tab=packages → `training-web` → Package settings → Change visibility →
+  Public. Without this, Azure's pull fails even though the push itself succeeded.
+- **Letting GitHub Actions deploy** — the OIDC app registration, federated credential, and role
+  assignment. See [github-actions-oidc.md](github-actions-oidc.md) (includes a CLI bug workaround
+  worth knowing about if you ever redo this).
+
+## Manual build/deploy (debugging only — CI/CD handles this normally)
 
 ```bash
-az deployment group create -g rg-training -f infra/main.bicep --parameters webImage=ghcr.io/jonas-ritz/training-web:<tag>
+docker build -f src/TrAIning.Web/Dockerfile -t ghcr.io/jonas-ritz/training-web:<tag> .
+docker push ghcr.io/jonas-ritz/training-web:<tag>   # requires docker login ghcr.io first
+az containerapp update -g rg-training -n ca-training-web --image ghcr.io/jonas-ritz/training-web:<tag>
 ```
-
-Bicep resources default their region to the resource group's own region
-(`resourceGroup().location` in `main.bicep`), so as long as the resource group is where you want
-things, no extra flags are needed for that. `webImage` has no default — it must always be passed
-explicitly, so a deploy can never silently run a stale/wrong tag.
-
-**Preview first, if you want to see the diff before it applies:**
-
-```bash
-az deployment group what-if -g rg-training -f infra/main.bicep --parameters webImage=ghcr.io/jonas-ritz/training-web:<tag>
-```
-
-`what-if` shows exactly what would be created/changed/deleted without touching anything. Secret
-outputs (see below) show as `*******` even here, not just in the final result. Ignore any
-`Modify` noise on `cae-training` for properties like `workloadProfiles` or `peerAuthentication` —
-those are Azure-populated defaults our template never sets, so redeploying is a no-op for them
-even though `what-if` shows them as changing.
 
 ## Verify
 
 ```bash
-az resource list -g rg-training -o table
+az resource list -g rg-training -o table                                          # all Succeeded?
+az containerapp show -g rg-training -n ca-training-web \
+  --query "properties.template.containers[0].image" -o tsv                        # which tag is live
+curl -I https://<app-fqdn>                                                        # actually reachable?
+az containerapp logs show -g rg-training -n ca-training-web --tail 30             # what the app itself is logging
 ```
 
-Should show `log-training`, `cae-training`, and `ca-training-web`, all `Succeeded`. Same
-information the Azure Portal shows under the resource group's Overview page, if you'd rather look
-there. To confirm the app is actually reachable, not just that the resource exists:
+The FQDN is a deployment output: `az deployment group show -g rg-training -n main --query
+properties.outputs.webFqdn.value -o tsv`.
 
-```bash
-curl -I "https://$(az deployment group show -g rg-training -n main --query properties.outputs.webFqdn.value -o tsv)"
-```
+## Secrets
 
-Should return `200`.
-
-## Automated deploy (CI/CD)
-
-Once the infrastructure above exists, `.github/workflows/ci.yml` builds, pushes, and deploys
-automatically on every push to `main` — no manual steps from here on. It authenticates to Azure
-via an OIDC federated credential rather than a stored secret (ADR-0012); setting that trust
-relationship up is a separate one-time step, not part of a normal deploy — see
-[github-actions-oidc.md](github-actions-oidc.md).
-
-## A note on secrets in this template
-
-The Log Analytics workspace exposes an access key (`listKeys().primarySharedKey`) that the
-Container Apps Environment needs, to authenticate its log writes. That value is marked
-`@secure()` on both the output that produces it and the parameter that receives it — Azure then
-omits it from the plaintext deployment-history/outputs view, rather than leaving a credential
-sitting in cleartext for anyone who can read deployment history. No secret in this template comes
-from Key Vault (there isn't one yet) or from a `.env`/config file — it's generated and consumed
-entirely within the deployment itself.
+The Log Analytics workspace's access key (`listKeys().primarySharedKey`) is marked `@secure()` on
+both the output and the parameter that carries it, so it never appears in plaintext deployment
+history. Nothing else in this template is a secret — there's no Key Vault yet.
